@@ -1,0 +1,18 @@
+[project]
+name = "yora-ocr"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "paddleocr[all]>=3.5.0",
+    "paddlepaddle==3.2.0",
+]
+
+[tool.uv.sources]
+paddlepaddle = { index = "paddlepaddle" }
+
+[[tool.uv.index]]
+name = "paddlepaddle"
+url = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+explicit = true
