@@ -2878,6 +2878,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "paddleocr", extra = ["all"] },
     { name = "paddlepaddle" },
+    { name = "pydantic" },
     { name = "pytest" },
 ]
 
@@ -2885,6 +2886,7 @@ dependencies = [
 requires-dist = [
     { name = "paddleocr", extras = ["all"], specifier = ">=3.5.0" },
     { name = "paddlepaddle", specifier = "==3.2.0", index = "https://www.paddlepaddle.org.cn/packages/stable/cpu/" },
+    { name = "pydantic", specifier = ">=2.13.3" },
     { name = "pytest", specifier = ">=9.0.3" },
 ]
 
