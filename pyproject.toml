@@ -8,8 +8,11 @@ dependencies = [
     "paddleocr[all]>=3.5.0",
     "paddlepaddle==3.2.0",
     "pydantic>=2.13.3",
-    "pytest>=9.0.3",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [tool.uv.sources]
 paddlepaddle = { index = "paddlepaddle" }
@@ -18,3 +21,8 @@ paddlepaddle = { index = "paddlepaddle" }
 name = "paddlepaddle"
 url = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
