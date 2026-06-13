@@ -1,5 +1,5 @@
 [project]
-name = "yora-ocr"
+name = "yora_ocr"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -13,6 +13,9 @@ dependencies = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.uv.sources]
 paddlepaddle = { index = "paddlepaddle" }

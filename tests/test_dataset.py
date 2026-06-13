@@ -1,14 +1,16 @@
 import pytest
 
-from yora_ocr.main import find_images
+from yora_ocr.helper import find_json_files
 from yora_ocr.ocr import ocr
 from yora_ocr.schema import Purchase
 
-@pytest.mark.parametrize("test_image", find_images())
-def test_dataset(test_image):
-    json_path= test_image.replace(".jpg", ".json")
-    with open(json_path, "r") as file:
-        text = file.read(json_path)
+@pytest.mark.parametrize("test_json", find_json_files())
+def test_dataset(test_json):
+    with open(test_json, "r") as file:
+        text = file.read()
     expected = Purchase.model_validate_json(text)
-    real = ocr(test_image)
+
+    jpg_path= test_json.replace(".json", ".jpg")
+    real = ocr(jpg_path)
+
     assert real == expected
