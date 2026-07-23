@@ -16,17 +16,11 @@ def main():
     # Ensure that the queue exists
     channel.queue_declare(queue="ocr_jobs_queue", durable=True)
 
-    # Receiving a message
-    # This function will print the message content
-    def callback(ch, method, properties, body):
-        print(f" [x] Received {body}")
-
-    channel.basic_consume(
-        queue="ocr_jobs_queue", on_message_callback=callback, auto_ack=True
-    )
-
     print(" [*] Waiting for messages. To exit press CTRL+C")
-    channel.start_consuming()
+    for method, properties, body in channel.consume("ocr_jobs_queue"):
+        if (method is not None and properties is not None and body is not None):
+            print(f" [x] Received {body}")
+            channel.basic_ack(method.delivery_tag)
 
 
 if __name__ == "__main__":
