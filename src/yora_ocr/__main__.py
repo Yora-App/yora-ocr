@@ -1,9 +1,17 @@
 from .ocr import ocr
 from .helper import find_images
+from pathlib import Path
 
-
-for image in find_images():
-    res = ocr(image)
+images = find_images("/home/julian/Nextcloud/yora_dataset/")
+print(f"Collected {len(images)} images from yora dataset")
+for image in images:
     json_path = image.replace(".jpg", ".json")
+    if Path(json_path).exists():
+        print(f"File {json_path} already exists, skipping...")
+        continue
+
+    res = ocr(image)
     with open(json_path, "w") as file:
-        file.write(res.model_dump_json())
+        file.write(res.model_dump_json(indent=2))
+
+    print(f"Successfully wrote ocr output to {json_path}")

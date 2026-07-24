@@ -5,7 +5,7 @@ from yora_ocr.ocr import ocr
 from yora_ocr.schema import Purchase
 
 
-@pytest.mark.parametrize("test_json", find_json_files())
+@pytest.mark.parametrize("test_json", find_json_files("/home/julian/Nextcloud/yora_dataset/"))
 def test_dataset(test_json):
     with open(test_json, "r") as file:
         text = file.read()
