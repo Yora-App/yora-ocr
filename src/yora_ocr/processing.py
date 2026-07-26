@@ -1,12 +1,15 @@
 from llama_cpp import Llama
-from .helper import purchase_model_to_json
+from .helper import model_to_json
+from .schema import Purchase
 
-output_format = purchase_model_to_json()
+output_format = model_to_json(Purchase)
 print(output_format)
 
 llm = Llama.from_pretrained(
     repo_id="lmstudio-community/Qwen3.5-0.8B-GGUF",
     filename="*Q8_0.gguf",
+    n_gpu_layers = -1,
+    verbose = True
 )
 
 output = llm.create_chat_completion(
