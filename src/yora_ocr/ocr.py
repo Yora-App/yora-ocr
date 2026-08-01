@@ -3,6 +3,8 @@ import re
 from paddleocr import PaddleOCR
 from paddlex.inference.pipelines.ocr.result import OCRResult
 
+from yora_ocr.price_detection import find_item_prices_and_total_price
+
 from .schema import Purchase
 
 
@@ -22,6 +24,12 @@ def ocr(path: str) -> Purchase:
     for res in result:
         res.save_to_img("output")
         res.save_to_json("output")
+
+        item_price_polygons, item_prices, total_price = (
+            find_item_prices_and_total_price(res["rec_polys"], res["rec_texts"])
+        )
+        print(item_prices)
+        print(f"total: {total_price}")
 
         for price_box_str, price_box_dim in zip(res["rec_texts"], res["rec_boxes"]):
             # box_dim: [x_min, y_min, x_max, y_max]
@@ -50,3 +58,6 @@ def ocr(path: str) -> Purchase:
 
     result_check = Purchase.model_validate(result_dict)
     return result_check
+
+
+ocr("/home/julian/Nextcloud/yora_dataset/netto/20260427_netto.jpg")
