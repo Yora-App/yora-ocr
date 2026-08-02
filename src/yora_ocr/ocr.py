@@ -26,7 +26,9 @@ def ocr(path: str) -> Purchase:
         res.save_to_json("output")
 
         item_price_polygons, item_prices, total_price = (
-            find_item_prices_and_total_price(res["rec_polys"], res["rec_texts"])
+            find_item_prices_and_total_price(
+                res["rec_polys"], res["rec_texts"], path, "output/debug_overlay.jpg"
+            )
         )
         print(item_prices)
         print(f"total: {total_price}")

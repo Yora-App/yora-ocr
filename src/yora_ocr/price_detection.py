@@ -1,6 +1,7 @@
 import re
 import numpy as np
 import shapely
+import cv2
 
 from collections.abc import Iterable
 
@@ -28,6 +29,9 @@ def baseline_vector_of_polygon(polygon: np.ndarray) -> np.ndarray:
     (i.e. we assume that text is wider than high)
     """
     assert polygon.shape == (4, 2)
+
+    # geometry operations are naturally float operations. Also int16 can overflow quickly
+    polygon = polygon.astype(np.float64)
 
     longest_edge_i = 0
     longest_edge_length = -np.inf
@@ -66,13 +70,105 @@ def normal_vector_of_polygon(polygon: np.ndarray) -> np.ndarray:
     return np.array([-baseline[1], baseline[0]])
 
 
-def find_largest_polygon_stack(
-    price_polygons: list[np.ndarray], non_price_polygons: list[np.ndarray]
-) -> list[int]:
+def draw_debug_overlay(
+    image_path: str,
+    polygon_stacks: list[list[np.ndarray]],
+    polygon_stacks_prices: list[list[int]],
+    non_price_polygons: list[np.ndarray],
+    output_path: str,
+):
+    DEBUG_COLORS = [
+        (255, 0, 0),  # Blue
+        (0, 255, 0),  # Green
+        (0, 0, 255),  # Red
+        (255, 255, 0),  # Cyan
+        (255, 0, 255),  # Magenta
+        (0, 255, 255),  # Yellow
+        (128, 0, 255),
+        (255, 128, 0),
+    ]
+
+    image = cv2.imread(image_path)
+    assert image is not None
+
+    for i, (stack, stack_prices) in enumerate(
+        zip(polygon_stacks, polygon_stacks_prices)
+    ):
+        for polygon, price in zip(stack, stack_prices):
+            # polygon: shape (4, 2)
+            pts = polygon.astype(np.int32).reshape((-1, 1, 2))
+
+            # draw OCR polygon
+            cv2.polylines(
+                image,
+                [pts],
+                isClosed=True,
+                color=DEBUG_COLORS[i % len(DEBUG_COLORS)],
+                thickness=2,
+            )
+
+            # centroid
+            centroid = centroid_of_polygon(polygon).astype(int)
+
+            cv2.circle(
+                image,
+                tuple(centroid),
+                radius=4,
+                color=(0, 0, 255),
+                thickness=-1,
+            )
+
+            # normal
+            normal = normal_vector_of_polygon(polygon)
+
+            end = centroid + normal * 100
+
+            cv2.arrowedLine(
+                image,
+                tuple(centroid),
+                tuple(end.astype(int)),
+                color=(255, 0, 0),
+                thickness=2,
+                tipLength=0.2,
+            )
+
+            # price text
+            cv2.putText(
+                image,
+                f"{price / 100:.2f}",
+                tuple(centroid + np.array([5, -5])),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                1,
+            )
+
+    for polygon in non_price_polygons:
+        # polygon: shape (4, 2)
+        pts = polygon.astype(np.int32).reshape((-1, 1, 2))
+
+        # draw OCR polygon
+        cv2.polylines(
+            image,
+            [pts],
+            isClosed=True,
+            color=(255, 255, 255),
+            thickness=2,
+        )
+
+    cv2.imwrite(output_path, image)
+    print(f"Wrote debug image to {output_path}")
+
+
+def group_polygons_into_stacks(
+    price_polygons: list[np.ndarray],
+    price_polygon_prices: list[int],
+    non_price_polygons: list[np.ndarray],
+) -> tuple[list[list[np.ndarray]], list[list[int]]]:
     """
-    Finds price polygons that are stacked above each other (without non_price_polygons in between).
-    Returns the largest of such stacks among the given polygons.
-    Returns this stack as a list of indices of the polygons in this stack, ordered from top to bottom.
+    Find polygon stacks (polygons stacked above each other without non_price_polygons in between)
+    Returns all polygon stacks, each ordered from top to bottom.
+    Also returns the price labels for each polygon in the same order
     """
     # calculate extend. We don't need to consider values larger than this for ray length etc
     extent = np.max(price_polygons) - np.min(price_polygons)
@@ -82,8 +178,8 @@ def find_largest_polygon_stack(
     assert isinstance(shapely_price_polygons, Iterable)
     assert isinstance(shapely_non_price_polygons, Iterable)
 
-    # list of tuples: first element is pointer to next polygon in stack, second element is distance to it
-    next_polygon_pointers = [(-1, extent)] * len(price_polygons)
+    # tuple of indices: first int points to previous polygon in stack, second to next polygon in stack
+    polygon_pointers = [(-1, -1)] * len(price_polygons)
     for a in range(len(shapely_price_polygons)):
         centroid_a = centroid_of_polygon(price_polygons[a])
         centroid_a_shapely = shapely.Point(centroid_a)
@@ -91,47 +187,53 @@ def find_largest_polygon_stack(
         normal_a_ray = shapely.LineString([centroid_a, centroid_a + extent * normal_a])
 
         # first we check distance to all non_price_polygons
+        min_distance = extent
         for non_price_polygon in shapely_non_price_polygons:
             intersection = normal_a_ray.intersection(non_price_polygon)
             if not intersection.is_empty:
                 distance = intersection.distance(centroid_a_shapely)
-                if distance < next_polygon_pointers[a][1]:
-                    next_polygon_pointers[a] = (-1, distance)
+                if distance < min_distance:
+                    min_distance = distance
 
         # next we check the distance to all price polygons
         # this distance must be smaller than the smallest non_price_polygons distance
         for b, polygon_b in enumerate(shapely_price_polygons):
-            if a == b:
+            if b == a or b == polygon_pointers[a][0]:
+                # omit current polygon and previous polygon
                 continue
             intersection = normal_a_ray.intersection(polygon_b)
             if not intersection.is_empty:
                 distance = intersection.distance(centroid_a_shapely)
-                if distance < next_polygon_pointers[a][1]:
-                    next_polygon_pointers[a] = (b, distance)
+                if distance < min_distance:
+                    min_distance = distance
+                    polygon_pointers[a] = (polygon_pointers[a][0], b)
+                    polygon_pointers[b] = (a, polygon_pointers[b][1])
 
-    longest_stack = []
-    longest_stack_length = 0
-    for x in range(len(next_polygon_pointers)):
-        i = x
-        current_stack = [i]
-        stack_length = 1
-        next_i = next_polygon_pointers[i][0]
-        visited = {i}
-        while next_i != -1 and next_i not in visited:
-            visited.add(next_i)
-            stack_length += 1
-            current_stack.append(next_i)
-            i = next_i
-            next_i = next_polygon_pointers[i][0]
-        if stack_length > longest_stack_length:
-            longest_stack = current_stack
-            longest_stack_length = stack_length
+    # finally we have to convert our list of indices to a list of stacks
+    stacks = []
+    stacks_prices = []
+    for i, (previous_i, next_i) in enumerate(polygon_pointers):
+        if previous_i == -1:  # root of stack
+            visited = {i}
+            current_stack = [price_polygons[i]]
+            current_stack_prices = [price_polygon_prices[i]]
+            while next_i != -1:
+                visited.add(next_i)
+                current_stack.append(price_polygons[next_i])
+                current_stack_prices.append(price_polygon_prices[i])
+                i = next_i
+                next_i = polygon_pointers[i][1]
+            stacks.append(current_stack)
+            stacks_prices.append(current_stack_prices)
 
-    return longest_stack
+    return stacks, stacks_prices
 
 
 def find_item_prices_and_total_price(
-    polygons: list[np.ndarray], ocr_texts: list[str]
+    polygons: list[np.ndarray],
+    ocr_texts: list[str],
+    image_path: str,
+    debug_image_output_path: str,
 ) -> tuple[list[np.ndarray], list[int], int]:
     price_polygons = []
     non_price_polygons = []
@@ -148,36 +250,44 @@ def find_item_prices_and_total_price(
         else:
             non_price_polygons.append(polygon)
 
-    filtered_polygon_indices = find_largest_polygon_stack(
-        price_polygons, non_price_polygons
+    polygon_stacks, polygon_stacks_prices = group_polygons_into_stacks(
+        price_polygons, price_polygons_prices, non_price_polygons
+    )
+    draw_debug_overlay(
+        image_path,
+        polygon_stacks,
+        polygon_stacks_prices,
+        non_price_polygons,
+        debug_image_output_path,
     )
 
-    filtered_polygons = []
-    filtered_polygons_prices = []
-    for i in filtered_polygon_indices:
-        filtered_polygons.append(price_polygons[i])
-        filtered_polygons_prices.append(price_polygons_prices[i])
+    largest_stack_size = len(polygon_stacks[0])
+    largest_stack = polygon_stacks[0]
+    largest_stack_prices = polygon_stacks_prices[0]
+    for stack, stack_prices in zip(polygon_stacks, polygon_stacks_prices):
+        if len(stack) > largest_stack_size:
+            largest_stack = stack
+            largest_stack_prices = stack_prices
 
     # filter out total price
     # we start by checking whether the last couple of elements are the same,
     # since the total price could be multiple times at the end of the stack
-    total_index = len(filtered_polygons_prices) - 1
+    total_index = len(largest_stack_prices) - 1
     while (
         total_index > 0
-        and filtered_polygons_prices[total_index]
-        == filtered_polygons_prices[total_index - 1]
+        and largest_stack_prices[total_index] == largest_stack_prices[total_index - 1]
     ):
         total_index -= 1
 
     total = 0
     for i in range(total_index):
-        total += filtered_polygons_prices[i]
+        total += largest_stack_prices[i]
 
-    if total == filtered_polygons_prices[total_index]:
-        filtered_polygons = filtered_polygons[:total_index]
-        filtered_polygons_prices = filtered_polygons_prices[:total_index]
+    if total == largest_stack_prices[total_index]:
+        largest_stack = largest_stack[:total_index]
+        largest_stack_prices = largest_stack_prices[:total_index]
     else:
-        for i in range(total_index, len(filtered_polygons_prices)):
-            total += filtered_polygons_prices[i]
+        for i in range(total_index, len(largest_stack_prices)):
+            total += largest_stack_prices[i]
 
-    return filtered_polygons, filtered_polygons_prices, total
+    return largest_stack, largest_stack_prices, total
