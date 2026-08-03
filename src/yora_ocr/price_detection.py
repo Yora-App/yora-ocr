@@ -299,7 +299,7 @@ def find_item_prices_and_total_price(
     # step 1: collect price polygons using a regex expression
     # this will catch too much though. Needs filtering
     for polygon, text in zip(polygons, ocr_texts):
-        if match := re.search(r"(?<!\d)-?\d+[.,]\d{2}(?!\d)", text.strip()):
+        if match := re.search(r"(?<![\d.,])-?\d+[.,]\d{2}(?![\d.,])", text.strip()):
             price_polygons.append(polygon)
             price_polygons_prices.append(
                 int(match[0].replace(",", "").replace(".", ""))
