@@ -5,7 +5,7 @@ from pathlib import Path
 images = find_images("/home/julian/Nextcloud/yora_dataset/")
 print(f"Collected {len(images)} images from yora dataset")
 for image in images:
-    json_path = image.replace(".jpg", ".json")
+    json_path = f"output/{image.replace('.jpg', '.json').rsplit('/')[-1]}"
     if Path(json_path).exists():
         print(f"File {json_path} already exists, skipping...")
         continue
