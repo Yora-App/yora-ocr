@@ -28,7 +28,11 @@ def ocr(path: str) -> Purchase:
             ".jpg", "_debug_overlay.jpg"
         )
         _, item_prices, total_price = find_item_prices_and_total_price(
-            res["rec_polys"], res["rec_texts"], path, debug_overlay_path
+            res["rec_polys"],
+            res["rec_texts"],
+            path,
+            res["doc_preprocessor_res"]["angle"],
+            debug_overlay_path,
         )
         result_dict["total"] = total_price
         for i, price in enumerate(item_prices):

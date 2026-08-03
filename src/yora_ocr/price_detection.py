@@ -73,6 +73,7 @@ def normal_vector_of_polygon(polygon: np.ndarray) -> np.ndarray:
 
 def draw_debug_overlay(
     image_path: str,
+    image_angle: int,
     polygon_stacks: list[list[np.ndarray]],
     polygon_stacks_prices: list[list[int]],
     non_price_polygons: list[np.ndarray],
@@ -91,6 +92,15 @@ def draw_debug_overlay(
 
     image = cv2.imread(image_path)
     assert image is not None
+
+    if image_angle == 90:
+        image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    elif image_angle == 180:
+        image = cv2.rotate(image, cv2.ROTATE_180)
+    elif image_angle == 270:
+        image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    elif image_angle != 0:
+        raise ValueError("Invalid angle!")
 
     for i, (stack, stack_prices) in enumerate(
         zip(polygon_stacks, polygon_stacks_prices)
@@ -290,6 +300,7 @@ def find_item_prices_and_total_price(
     polygons: list[np.ndarray],
     ocr_texts: list[str],
     image_path: str,
+    image_angle: int,
     debug_image_output_path: str,
 ) -> tuple[list[np.ndarray], list[int], int]:
     price_polygons = []
@@ -315,6 +326,7 @@ def find_item_prices_and_total_price(
     )
     draw_debug_overlay(
         image_path,
+        image_angle,
         polygon_stacks,
         polygon_stacks_prices,
         non_price_polygons,
