@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import re
 import numpy as np
 import shapely
@@ -160,6 +161,14 @@ def draw_debug_overlay(
     print(f"Wrote debug image to {output_path}")
 
 
+@dataclass
+class Node:
+    previous: int = -1
+    previous_distance: float = np.inf
+    next: int = -1
+    next_distance: float = np.inf
+
+
 def group_polygons_into_stacks(
     price_polygons: list[np.ndarray],
     price_polygon_prices: list[int],
@@ -171,15 +180,15 @@ def group_polygons_into_stacks(
     Also returns the price labels for each polygon in the same order
     """
     # calculate extend. We don't need to consider values larger than this for ray length etc
-    extent = np.max(price_polygons) - np.min(price_polygons)
+    points = np.concatenate(price_polygons)
+    extent = np.linalg.norm(np.max(points, axis=0) - np.min(points, axis=0))
 
     shapely_price_polygons = shapely.polygons(price_polygons)
     shapely_non_price_polygons = shapely.polygons(non_price_polygons)
     assert isinstance(shapely_price_polygons, Iterable)
     assert isinstance(shapely_non_price_polygons, Iterable)
 
-    # tuple of indices: first int points to previous polygon in stack, second to next polygon in stack
-    polygon_pointers = [(-1, -1)] * len(price_polygons)
+    polygon_pointers = [Node() for _ in price_polygons]
     for a in range(len(shapely_price_polygons)):
         centroid_a = centroid_of_polygon(price_polygons[a])
         centroid_a_shapely = shapely.Point(centroid_a)
@@ -187,46 +196,94 @@ def group_polygons_into_stacks(
         normal_a_ray = shapely.LineString([centroid_a, centroid_a + extent * normal_a])
 
         # first we check distance to all non_price_polygons
-        min_distance = extent
         for non_price_polygon in shapely_non_price_polygons:
             intersection = normal_a_ray.intersection(non_price_polygon)
             if not intersection.is_empty:
                 distance = intersection.distance(centroid_a_shapely)
-                if distance < min_distance:
-                    min_distance = distance
+                if distance < polygon_pointers[a].next_distance:
+                    polygon_pointers[a].next_distance = distance
 
         # next we check the distance to all price polygons
         # this distance must be smaller than the smallest non_price_polygons distance
         for b, polygon_b in enumerate(shapely_price_polygons):
-            if b == a or b == polygon_pointers[a][0]:
+            if b == a or b == polygon_pointers[a].previous:
                 # omit current polygon and previous polygon
                 continue
             intersection = normal_a_ray.intersection(polygon_b)
             if not intersection.is_empty:
                 distance = intersection.distance(centroid_a_shapely)
-                if distance < min_distance:
-                    min_distance = distance
-                    polygon_pointers[a] = (polygon_pointers[a][0], b)
-                    polygon_pointers[b] = (a, polygon_pointers[b][1])
+                if (
+                    distance < polygon_pointers[a].next_distance
+                    and distance < polygon_pointers[b].previous_distance
+                ):
+                    polygon_pointers[a].next = b
+                    polygon_pointers[a].next_distance = distance
+                    polygon_pointers[b].previous = a
+                    polygon_pointers[b].previous_distance = distance
 
     # finally we have to convert our list of indices to a list of stacks
     stacks = []
     stacks_prices = []
-    for i, (previous_i, next_i) in enumerate(polygon_pointers):
-        if previous_i == -1:  # root of stack
+    for i, node in enumerate(polygon_pointers):
+        if node.previous == -1:  # root of stack
             visited = {i}
             current_stack = [price_polygons[i]]
             current_stack_prices = [price_polygon_prices[i]]
-            while next_i != -1:
-                visited.add(next_i)
-                current_stack.append(price_polygons[next_i])
-                current_stack_prices.append(price_polygon_prices[i])
-                i = next_i
-                next_i = polygon_pointers[i][1]
+            while node.next != -1 and node.next not in visited:
+                visited.add(node.next)
+                current_stack.append(price_polygons[node.next])
+                current_stack_prices.append(price_polygon_prices[node.next])
+                i = node.next
+                node = polygon_pointers[node.next]
             stacks.append(current_stack)
             stacks_prices.append(current_stack_prices)
 
     return stacks, stacks_prices
+
+
+def count_occurrence_of_total_price_on_recipe(
+    polygon_stack_prices: list[int], all_other_polygon_prices: list[int]
+) -> tuple[int, int, int]:
+    """
+    Counts how often the total price of all items occurs on the whole receipt for the given polygon stack.
+    If the total of all prices is not anywhere on the receipt then this is probably not the correct stack
+    Returns the total price, the number of detected total price labels, as well as the new last index for the polygon stack after cleaning it off total price tags
+    """
+    total = -1
+    count = 0
+    index = len(polygon_stack_prices)
+    # the total price could be in the same stack as all the item prices
+    # first we have to count these
+    # we start by checking whether the last couple of elements are the same,
+    # since the total price could be multiple times at the end of the stack
+    if len(polygon_stack_prices) > 1:
+        total_index = len(polygon_stack_prices) - 1
+        while (
+            total_index > 0
+            and polygon_stack_prices[total_index]
+            == polygon_stack_prices[total_index - 1]
+        ):
+            total_index -= 1
+
+        total = 0
+        for i in range(total_index):
+            total += polygon_stack_prices[i]
+
+        if total == polygon_stack_prices[total_index]:
+            index = total_index
+            count += len(polygon_stack_prices) - total_index
+        else:
+            for i in range(total_index, len(polygon_stack_prices)):
+                total += polygon_stack_prices[i]
+    else:
+        total = polygon_stack_prices[0]
+
+    # now we can check the rest of the receipts for other totals
+    for price in all_other_polygon_prices:
+        if price == total:
+            count += 1
+
+    return total, count, index
 
 
 def find_item_prices_and_total_price(
@@ -239,8 +296,8 @@ def find_item_prices_and_total_price(
     non_price_polygons = []
     price_polygons_prices = []
 
-    # collect price polygons using a regex expression
-    # this will catch too much though. Needs filtering through layout analysis
+    # step 1: collect price polygons using a regex expression
+    # this will catch too much though. Needs filtering
     for polygon, text in zip(polygons, ocr_texts):
         if match := re.search(r"(?<!\d)-?\d+[.,]\d{2}(?!\d)", text.strip()):
             price_polygons.append(polygon)
@@ -250,6 +307,9 @@ def find_item_prices_and_total_price(
         else:
             non_price_polygons.append(polygon)
 
+    # step 2: consolidate polygons into stacks
+    # this doesn't filter anything yet
+    # however by doing this we can filter stacks of polygons instead of individual polygons
     polygon_stacks, polygon_stacks_prices = group_polygons_into_stacks(
         price_polygons, price_polygons_prices, non_price_polygons
     )
@@ -261,33 +321,58 @@ def find_item_prices_and_total_price(
         debug_image_output_path,
     )
 
-    largest_stack_size = len(polygon_stacks[0])
-    largest_stack = polygon_stacks[0]
-    largest_stack_prices = polygon_stacks_prices[0]
-    for stack, stack_prices in zip(polygon_stacks, polygon_stacks_prices):
-        if len(stack) > largest_stack_size:
-            largest_stack = stack
-            largest_stack_prices = stack_prices
+    # step 3: find total price polygons and filter stacks that don't have a total price
+    # assumption: the stack that contains all item prices has to have at least one other
+    # price label on the receipt that contains its total
+    # this also removes the total price label from the individual stacks, so that later
+    # the stack count only contains item prices
+    polygon_stacks_filtered = []
+    polygon_stacks_prices_filtered = []
+    total_price_per_stack = []
+    count_of_total_per_stack = []
+    highest_total_count = 0
+    longest_stack_length = 0
+    for i in range(len(polygon_stacks_prices)):
+        # get all polygon except from this stack
+        polygon_stacks_prices_copy = polygon_stacks_prices.copy()
+        polygon_stacks_prices_copy.pop(i)
+        price_list = [price for stack in polygon_stacks_prices_copy for price in stack]
 
-    # filter out total price
-    # we start by checking whether the last couple of elements are the same,
-    # since the total price could be multiple times at the end of the stack
-    total_index = len(largest_stack_prices) - 1
-    while (
-        total_index > 0
-        and largest_stack_prices[total_index] == largest_stack_prices[total_index - 1]
-    ):
-        total_index -= 1
+        total, count, index = count_occurrence_of_total_price_on_recipe(
+            polygon_stacks_prices[i], price_list
+        )
 
-    total = 0
-    for i in range(total_index):
-        total += largest_stack_prices[i]
+        # filter out stacks where no total was found on the whole receipt
+        if count > 0:
+            polygon_stacks_filtered.append(polygon_stacks[i][:index])
+            polygon_stacks_prices_filtered.append(polygon_stacks_prices[i][:index])
+            total_price_per_stack.append(total)
+            count_of_total_per_stack.append(count)
+            highest_total_count = max(highest_total_count, count)
+            longest_stack_length = max(
+                longest_stack_length, len(polygon_stacks_filtered[-1])
+            )
+    if len(polygon_stacks_filtered) == 0:
+        raise Exception("Couldn't find a total price that matches the item prices!")
 
-    if total == largest_stack_prices[total_index]:
-        largest_stack = largest_stack[:total_index]
-        largest_stack_prices = largest_stack_prices[:total_index]
-    else:
-        for i in range(total_index, len(largest_stack_prices)):
-            total += largest_stack_prices[i]
+    # step 4: weight remaining stacks by different criteria
+    # the stack with the highest score wins and gets returned
+    max_score = 0
+    chosen_stack_index = 0
+    for i in range(len(polygon_stacks_prices_filtered)):
+        # on most receipts the total is repeated many times, so a higher total count makes the stack a good candidate
+        # also longer stacks are better candidates as well
+        # in the future we could add other scores here, e.g. left/right positioning on the receipt etc.
+        score = (
+            len(polygon_stacks_prices_filtered[i]) / longest_stack_length
+            + count_of_total_per_stack[i] / highest_total_count
+        )
+        if score > max_score:
+            max_score = score
+            chosen_stack_index = i
 
-    return largest_stack, largest_stack_prices, total
+    return (
+        polygon_stacks_filtered[chosen_stack_index],
+        polygon_stacks_prices_filtered[chosen_stack_index],
+        total_price_per_stack[chosen_stack_index],
+    )
